@@ -1,0 +1,139 @@
+---
+title: "Tidy Evaluation - Part I Principles - Chapter 2"
+author: "Nicolas May"
+date: "2/2/2019"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: espresso
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = TRUE)
+```
+
+# 2 Why and how
+
+## 2.1 Data masking
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+glimpse(starwars)
+```
+
+
+```{r}
+starwars %>% 
+  filter(height < 200,
+         gender == "male")
+```
+
+```{r}
+starwars[starwars$height < 200 & starwars$gender == "male", ]
+```
+
+## 2.2 Quoting code
+
+```{r}
+starwars %>% 
+  summarize_at(.vars = vars(ends_with("color")), n_distinct)
+```
+
+```{r}
+starwars %>% 
+  summarize_at(.vars = vars(height, mass), mean, na.rm = TRUE)
+```
+
+```{r}
+vars(ends_with("color"), height:mass)
+```
+
+```{r}
+exprs <- vars(height / 100, mass + 50)
+exprs
+
+rlang::eval_tidy(exprs[[1]])
+
+rlang::eval_tidy(exprs[[1]], data = starwars)
+rlang::eval_tidy(exprs[[2]], data = starwars)
+```
+
+## 2.3 Unquoting code
+
+```{r}
+my_function <- function(x) x * 100
+
+my_function(6)
+#> [1] 600
+
+my_function(2 * 3)
+#> [1] 600
+
+a <- 2
+b <- 3
+my_function(a * b)
+#> [1] 600
+```
+
+```{r}
+starwars %>% 
+  summarize(avg = mean(height, na.rm = TRUE))
+
+value <- mean(height, na.rm = TRUE)
+starwars %>% summarize(avg = value)
+```
+
+```{r}
+x <- 1
+
+rlang::qq_show(
+  starwars %>% summarize(out = x)
+)
+
+rlang::qq_show(
+  starwars %>% summarize(out = !!x)
+)
+```
+
+```{r}
+col <- "height"
+
+rlang::qq_show(
+  starwars %>% summarize(out = sum(!!col, na.rm = TRUE))
+)
+```
+
+```{r}
+starwars %>% summarize(out = sum("height", na.rm = TRUE))
+```
+
+```{r}
+sym(col)
+```
+
+```{r}
+rlang::qq_show(
+  starwars %>% summarize(out = sum(!!sym(col), na.rm = TRUE))
+)
+```
+
+```{r}
+rlang::qq_show(col)
+rlang::qq_show(sym(col))
+rlang::qq_show(!!col)
+rlang::qq_show(!!sym(col))
+```
+
+```{r}
+starwars %>% 
+  summarize(out = sum(!!sym(col), na.rm = TRUE))
+```
+
+
+
+
+
+
