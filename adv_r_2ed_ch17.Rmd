@@ -1,0 +1,273 @@
+---
+title: "Advanced R (2nd ed)"
+output: 
+  html_notebook:
+    theme: sandstone
+    highlight: zenburn
+    toc: true
+    toc_float: true
+---
+
+# IV Metaprogramming - Chapter 17
+
+## 17.1 Introduction
+
+```{r}
+library(rlang)
+library(lobstr)
+```
+
+## 17.2 Code is data
+
+```{r}
+expr(mean(x, na.rm = TRUE))
+
+expr(10 + 100 + 1000)
+```
+
+```{r}
+capture_it <- function(x) {
+  expr(x)
+}
+
+capture_it(a + b + c)
+```
+
+```{r}
+capture_it <- function(x) {
+  enexpr(x)
+}
+
+capture_it(a + b + c)
+```
+
+Complex expressions behave much like lists. That means you can modify them using `[[` and `$`.
+
+```{r}
+f <- expr(f(x = 1, y = 2))
+f
+f$x
+f$y
+
+f$z <- 3
+f
+f$z
+
+f[[1]]
+f[[2]]
+f[[3]]
+f[[4]]
+
+f[[2]] <- NULL
+f
+```
+
+## 17.3 Code is a tree
+
+Almost every programming language represents code as a tree, often called the abstract syntax tree, or AST for short. R is unusual in that you can actually inspect and manipulate this tree.
+
+Function calls form the branches of the tree, and are shown by rectangles. The leaves of the tree are symbols (like a) and constants (like "b").
+
+```{r}
+lobstr::ast(f(a, "b"))
+```
+
+Nested function calls create more deeply branching trees.
+
+```{r}
+lobstr::ast(f1(f2(a, b), f3(1, f4(2))))
+```
+
+Because all function forms in R can be written in prefix form (Section 6.8.2), every R expression can be displayed in this way.
+
+```{r}
+lobstr::ast(1 + 2 * 3)
+
+lobstr::ast(1 * 2 + 3)
+
+lobstr::ast(1 * 2 + 3 * 4)
+```
+
+## 17.4 Code can generate code
+
+```{r}
+call2("f", 1, 2, 3)
+
+call2("+", 1, call2("*", 2, 3))
+
+call2("+", call2("*", 1, 2), 3)
+
+call2("+", call2("*", 1, 2), call2("*", 3, 4))
+
+x <- 3
+call2("+", 1, x)
+rm(x)
+```
+
+`call2()` is often convenient to program with, but is a bit clunky for interactive use. An alternative technique is to build complex code trees by combining simpler code trees with a template. `expr()` and `enexpr()` have built-in support for this idea via `!!` (pronounced bang-bang), the **unquote operator**.
+
+Basically `!!x` inserts the code tree stored in `x` into the expression. This makes it easy to build complex trees from simple fragments.
+
+```{r}
+xx <- expr(x + x)
+yy <- expr(y + y)
+
+expr(!!xx / !!yy)
+```
+
+```{r}
+cv <- function(var) {
+  var <- enexpr(var)
+  expr(sd(!!var) / mean(!!var))
+}
+
+cv(x)
+
+cv(x + y)
+```
+
+```{r}
+cv(`)`)
+```
+
+## 17.5 Evaluation runs code
+
+The primary tool for evaluating expressions is `base::eval()`, which takes an expression and an environment.
+
+```{r}
+eval(expr(x + y), env(x = 1, y = 2))
+```
+
+```{r}
+eval(expr(x + y), env(x = 100, y = 2))
+```
+
+```{r}
+# sd(1:5) / mean(1:5)
+eval(cv(x), env(x = 1:5))
+```
+
+If you omit the environment, eval uses the current environment.
+
+```{r}
+x <- 10
+y <- 100
+eval(expr(x + y))
+```
+
+One of the big advantages of evaluating code manually is that you can tweak the environment. There are two main reasons to do this:
+
+1. To temporarily override functions to implement a domain specific language.
+2. To add a data mask so you can to refer to variables in a data frame as if they are variables in an environment.
+
+## 17.6 Customizing evaluation with functions
+
+The above example used an environment that bound x and y to vectors. It’s less obvious that you also bind names to functions, allowing you to override the behaviour of existing functions.
+
+Here code is evaluated in a special environment where `*` and `+` have been overridden to work with strings instead of numbers.
+
+```{r}
+string_math <- function(x) {
+  e <- env(
+    caller_env(),
+    `+` = function(x, y) paste0(x, y),
+    `*` = function(x, y) strrep(x, y)
+  )
+  
+  eval(enexpr(x), envir = e)
+}
+
+name <- "Hadley"
+string_math("Hello " + name)
+
+string_math(("x" * 2 + "-y ") * 3)
+```
+
+## 17.7 Customizing evaluation with data
+
+Rebinding functions is an extremely powerful technique, but it tends to require a lot of investment. A more immediately practical application is modifying evaluation to look for variables in a data frame instead of an environment.
+
+It’s possible to use `eval()` for this, but there are a few potential pitfalls, so we’ll switch to `rlang::eval_tidy()` instead.
+
+```{r}
+df <- data.frame(x = 1:5, y = sample(5))
+# df
+
+eval_tidy(expr = expr(x + y), data = df)
+```
+
+Evaluating with a data mask is a useful technique for interactive analysis because it allows you to write `x + y` rather than `df$x + df$y`. However, that convenience comes at a cost: ambiguity. In Section 20.4 you’ll learn how to deal ambiguity using special `.data` and `.env` pronouns.
+
+We can wrap this pattern up into a function by using `enexpr()`. This gives us a function very similar to `base::with()`.
+
+```{r}
+with2 <- function(df, expr) {
+  eval_tidy(enexpr(expr), df)
+}
+
+with2(df, x + y)
+```
+
+Unfortunately this function (`with2()`) has a subtle bug and we need a new data structure to deal with it.
+
+## 17.8
+
+Notice what happens when we put an `a` variable inside the `with2()` function.
+
+```{r}
+with2 <- function(df, expr) {
+  a <- 1000
+  eval_tidy(enexpr(expr), df)
+}
+```
+
+We want the value of `a` to come from the binding we can see (10), not the binding internal to the function (1000).
+
+```{r}
+df <- data.frame(x = 1:3)
+a <- 10
+with2(df, x + a)
+```
+
+We can solve this problem by using a new data structure: a quosure. The quosure bundles an expression with an environment. `eval_tidy()` knows how to work with quosures, so we only need to use `enquo()` instead of `enexpr()`.
+
+```{r}
+with2 <- function(df, expr) {
+  a <- 1000
+  eval_tidy(enquo(expr), df)
+}
+
+with2(df, x + a)
+```
+
+Whenever you use a data mask, you have to always use `enquo()` instead of `enexpr()`.
+
+
+
+```{r echo=FALSE}
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+```
