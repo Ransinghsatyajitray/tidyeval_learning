@@ -1,14 +1,14 @@
 ---
 title: "Advanced R (2nd ed)"
 output: 
-  html_notebook:
+  html_document:
     theme: sandstone
     highlight: zenburn
     toc: true
     toc_float: true
 ---
 
-# IV Metaprogramming - Chapter 17
+# IV Metaprogramming - Chapter 17 - Big Picture
 
 ## 17.1 Introduction
 

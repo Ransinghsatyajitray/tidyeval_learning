@@ -1,0 +1,228 @@
+---
+title: "Advanced R (2nd ed)"
+output: 
+  html_document:
+    theme: sandstone
+    highlight: zenburn
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = TRUE)
+```
+
+# IV Metaprogramming - Chapter 18 - Expressions
+
+## 18.1 Introduction
+
+```{r}
+y <- x * 10
+```
+
+The above doesn't work because we haven't define a variable called `x`.
+
+It'd be nice if we could capture the intent of the code without executing it.
+
+```{r}
+z <- rlang::expr(y <- x * 10)
+z
+```
+
+`expr()` returns an expression, an object that captures the structure of the code without evaluating it. If you have an expression, you can run it with `base::eval()`.
+
+```{r}
+x <- 4
+eval(z)
+```
+
+
+```{r}
+library(rlang)
+library(lobstr)
+```
+
+## 18.2 Abstract syntax trees
+
+### 18.2.1 Drawing
+
+```{r}
+lobstr::ast(f(x, "y", 1))
+```
+
+```{r}
+lobstr::ast(f(g(1, 2), h(3, 4, i())))
+```
+
+### 18.2.2 Non-code components
+
+The "abstract" in "abstract syntax tree" is because whitespace is (mostly) meaningless.
+
+```{r}
+lobstr::ast(
+  f  ( x   ,       y   ) # important
+)
+```
+
+Here's an example where whitespace matters.
+
+```{r}
+lobstr::ast(y <- x)
+lobstr::ast(y < -x)
+```
+
+### 18.2.3 Infix calls
+
+Every call in R can be written in tree form because any call in R can be written in prefix form.
+
+`y <- x * 10` can be written in prefix form as `` `<-`(y, `*`(x, 10)) ``.
+
+```{r}
+lobstr::ast(y <- x * 10)
+```
+
+if you generate an expression with prefix calls, R will still print it in infix form.
+
+```{r}
+expr(`<-`(y, `*`(x, 10))) # prefix operator form
+expr(y <- x * 10)         # infix operator form
+```
+
+### 18.2.4 Exercises
+
+1. Reconstruct the code represented by the trees below:
+
+```
+#> █─f 
+#> └─█─g 
+#>   └─█─h
+```
+
+```{r}
+lobstr::ast(f(g(h())))
+```
+
+```
+#> █─`+` 
+#> ├─█─`+` 
+#> │ ├─1 
+#> │ └─2 
+#> └─3
+```
+
+```{r}
+lobstr::ast(1 + 2 + 3)
+```
+
+```
+#> █─`*` 
+#> ├─█─`(` 
+#> │ └─█─`+` 
+#> │   ├─x 
+#> │   └─y 
+#> └─z
+```
+
+```{r}
+lobstr::ast((x + y) * z)
+```
+
+2. Draw the following trees by hand then check your answers with `lobstr::ast()`.
+
+`f(g(h(i(1, 2, 3))))`
+
+```{r}
+lobstr::ast(f(g(h(i(1, 2, 3)))))
+```
+
+`f(1, g(2, h(3, i())))`
+
+```{r}
+lobstr::ast(f(1, g(2, h(3, i()))))
+```
+
+`f(g(1, 2), h(3, i(4, 5)))`
+
+```{r}
+lobstr::ast(f(g(1, 2), h(3, i(4, 5))))
+```
+
+3. What’s happening with the ASTs below? (Hint: carefully read `?"^"`)
+
+(a)
+```{r}
+lobstr::ast(`x` + `y`)
+lobstr::ast(x + y)
+lobstr::ast(`x`)
+lobstr::ast(x)
+```
+
+This seems straightforward. `x` and ```x``` both express the same symbol: `x`.
+
+(b)
+```{r}
+lobstr::ast(x ** y)
+```
+
+Here, the following expressions are all the same:
+
+* `x ^ y`
+* ```^`(x, y)``
+* `x ** y`
+
+```{r}
+lobstr::ast(x ^ y)
+lobstr::ast(`^`(x, y))
+lobstr::ast(x ^ y)
+```
+
+As the documentation in `?"^"` says, "`**` is translated in the parser to `^`, but this was undocument for many years... Even though it (i.e., the infix binary operator `**`) had been deprecated in S for 20 years, it was still accepted in R in 2008."
+
+(c)
+```{r}
+lobstr::ast(1 -> x)
+```
+
+The `<-` assignment operator in R actually works in both directions: `<-` or `->`. `x <- 1` assigns the value of 1 to the variable `x`, and `1 -> x` does the same thing. They both can be expressed as `` `<-`(x, 1)``.
+
+The following are all the same: 
+
+* `x <- 1`
+* `1 -> x`
+* ```<-`(x, 1)``
+
+```{r}
+lobstr::ast(x <- 1)
+lobstr::ast(1 -> x)
+lobstr::ast(`<-`(x, 1))
+```
+
+
+
+```{r echo=FALSE}
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+```
