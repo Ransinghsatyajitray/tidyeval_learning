@@ -197,6 +197,606 @@ lobstr::ast(1 -> x)
 lobstr::ast(`<-`(x, 1))
 ```
 
+4. What is special about the AST below? (Hint: re-read Section 6.2.1)
+
+```{r}
+lobstr::ast(function(x = 1, y = 2) {})
+```
+
+The AST for this function has the formals (`x = 1`, `y = 2`), the body (`{`), and reference to the source code (which unlike the body also contains code comments and formatting). What's the 
+
+From 6.2.1...
+
+```{r}
+f02 <- function(x, y) {
+  # A comment
+  x + y
+}
+```
+
+The formals.
+```{r}
+formals(f02)
+```
+
+The body.
+```{r}
+body(f02)
+```
+
+The environment.
+```{r}
+environment(f02)
+```
+
+Like all objects in R, functions can also possess any number of additional `attributes()`. The source reference ("srcref") attribute of the function.
+```{r}
+attr(f02, "srcref")
+```
+
+5. What does the call tree of an `if` statement with multiple `else if` conditions look like? Why?
+
+```{r}
+lobstr::ast(
+  if (x == 0) {
+    0
+  } else if (x < 0) {
+    -1
+  } else if (x > 0) {
+    1
+  }
+)
+```
+
+What's going on is the R converts the `if ... if else ... if else` statement into an expression with nested `if`s.
+
+```{r}
+lobstr::ast(
+  `if`(`==`(x, 0),          # if
+       `{`(0), 
+       `if`(`<`(x, 0),      # if else
+            `{`(-1),
+            `if`(`>`(x, 0), # if else
+                 `{`(1)))))
+```
+
+## 18.3 Expressions
+
+An expression is any member of a set of base types created by parsing code: constant scalars, symbols, call objects, and pairlists.
+
+### 18.3.1 Constants
+
+Scalar constants are the simplest component of the AST. A constant is either `NULL` or a length-1 atomic vector like `TRUE`, `1L`, `2.5`, or `"x"`.
+
+You can test for a constant with `rlang::is_syntactic_literal()`.
+
+```{r}
+rlang::is_syntactic_literal(TRUE)
+rlang::is_syntactic_literal(1L)
+rlang::is_syntactic_literal(2.5)
+rlang::is_syntactic_literal("x")
+rlang::is_syntactic_literal(NULL)
+x <- 1:10
+rlang::is_syntactic_literal(x)
+rlang::is_syntactic_literal(expr(x))
+```
+
+Constants are "self-quoting", meaning that the expression used to represent a constant is the constant itself.
+
+```{r}
+expr(TRUE)
+TRUE
+identical(expr(TRUE), TRUE)
+
+identical(expr(1L), 1L)
+identical(expr(2.5), 2.5)
+identical(expr("x"), "x")
+```
+
+### 18.3.2 Symbols
+
+A symbol represents the name of an object like `x`, `mtcars`, or `mean`.
+
+You can create a symbol in two ways:
+
+1. capturing code that references an object with `expr()`, or
+2. turning a string into a symbol with `rlang::sym()`.
+
+```{r}
+expr(x)
+
+sym("x")
+```
+
+You can turn a symbol back into a string with `as.character()` or `rlang::as_string()`. `as_string()` has the advantage of clearly signaling that you'll get back a character vector of length 1.
+
+```{r}
+as_string(expr(x))
+```
+
+A symbol is recognizable because it's printed without quotes. You can also check with `str()` or `is.symbol()`.
+
+```{r}
+str(expr(x))
+
+is.symbol(expr(x))
+```
+
+Symbols aren't vectorized; they're always of length one. If you want multiple symbols, you'll need to put them in a list (with `syms()`).
+
+```{r}
+syms(c("x", "y"))
+syms(list("x", "y"))
+```
+
+### 18.3.3 Calls
+
+A call object represents a captured function call. They're a special type of list where the first component specifies the function to call (usually a symbol), and the remaining elements are the arguments for that call. Call objects create branches in the AST, because calls can be nested inside other calls.
+
+Confusingly, both `typeof()` and `str()` print "language" for calls, but `is.call()` returns `TRUE`.
+
+```{r}
+lobstr::ast(read.table("important.csv", row.names = FALSE))
+
+x <- expr(read.table("important.csv", row.names = FALSE))
+
+typeof(x)
+str(x)
+is.call(x)
+```
+
+#### 18.3.3.1 Subsetting
+
+Calls behave like lists in that you can use standard subsetting tools.
+
+The first element is the function to call.
+
+```{r}
+x[[1]]
+
+is.symbol(x[[1]])
+```
+
+The rest of the elements are the arguments.
+
+```{r}
+as.list(x[-1])
+```
+
+You can extract individual elements of the call using `[[`, or if the argument is named using `$`.
+
+```{r}
+x[[2]]
+
+x$row.names
+```
+
+The number of arguments in the call are the length of the call minus 1.
+
+```{r}
+length(x) - 1
+```
+
+Since argument placement in R is flexible, extracting the arguments can be tricky. A workaround is using `rlang::call_standardise()` which standardizes the arguments with their full name. Just note that if the function uses `...` then not all arguments can be standardized.
+
+```{r}
+rlang::call_standardise(x)
+call_standardize <- rlang::call_standardise # US spelling!
+call_standardize(x)
+```
+
+Calls can be modified in the same way as lists.
+
+```{r}
+x$header <- TRUE
+
+x
+```
+
+#### 18.3.3.2 Function position
+
+The first element of the call object is the function position. The function position contains the function to be called when the object is evaluated, and it's almost always a symbol.
+
+```{r}
+lobstr::ast(foo())
+
+lobstr::ast("foo"())
+```
+
+Sometimes the function doesn't exist in the current environment, and you need to do some computation to retrieve it. Examples include functions that are in an unloaded package, functions that are part of an R6 object, and functions created by function factories.
+
+```{r}
+lobstr::ast(pkg::foo())
+
+lobstr::ast(obj$foo(1))
+
+lobstr::ast(foo(1)(2))
+```
+
+#### 18.3.3.3 Constructing
+
+You can construct a call object from its components using `rlang::call2()`. The first argument to `call2()` is the function to be called (as a string, a symbol, or another call). The remaining arguments are the arguments passed to the function to be called.
+
+```{r}
+call2("mean", x = expr(x), na.rm = TRUE)
+
+call2(expr(mean), x = expr(x), na.rm = TRUE)
+
+call2(expr(base::mean), x = expr(x), na.rm = TRUE)
+```
+
+Infix calls created with `call2()` print in infix format.
+
+```{r}
+call2("<-", expr(x), 10)
+call2(expr(`<-`), expr(x), 10)
+```
+
+### 18.3.4 Summary
+
+|   | `str()` | `typeof()` |
+|---|---|---|
+| Scalar constant | `logi`/`int`/`num`/`chr` | `logical`/`integer`/`double`/`character` |
+| Symbol | `symbol` | `symbol` |
+| Call object | `language` | `language` |
+| Pairlist | Dotted pair list | `pairlist` |
+| Expression vector | `expression()` | `expression` |
+
+|   | base | rlang |
+|---|---|---|
+| Scalar constant | — | `is_syntactic_literal()` |
+| Symbol | `is.symbol()` | `is_symbol()` |
+| Call object | `is.call()` | `is_call()` |
+Pairlist | `is.pairlist()` | `is_pairlist()` |
+Expression vector | `is.expression()` | — |
+
+### 18.3.5 Exercises
+
+1. Which two of the six types of atomic vector can’t appear in an expression? Why? Similarly, why can’t you create an expression that contains an atomic vector of length greater than one?
+
+The two types of "rare" vectors that can't appear in expressions are complex vectors and raw vectors.
+
+```{r}
+lobstr::ast(f(as.Date("2018-01-01")))
+
+lobstr::ast(c(1, 2, 3))
+```
+
+Why? I'm not really sure on this one. I haven't read the whole book and it's not entirely clear from rereading section 18.3 and then reading sections 3.1-3.4. So... _**shrug**_.
+
+2. What happens when you subset a call object to remove the first element? e.g. `expr(read.csv("foo.csv", header = TRUE))[-1]`. Why?
+
+```{r}
+expr(read.csv("foo.csv", header = TRUE))[-1]
+
+lobstr::ast("foo.csv"(header = TRUE))
+```
+
+The next element in the call object (the first argument of the function to be called) moves to the function position.
+
+3. Describe the differences between the following call objects.
+
+```{r}
+x <- 1:10
+
+call2(median, x, na.rm = TRUE)
+call2(expr(median), x, na.rm = TRUE)
+call2(median, expr(x), na.rm = TRUE)
+call2(expr(median), expr(x), na.rm = TRUE)
+```
+
+If you don't quote the expressions `median` and `x`, they're evaluated in `call2()`. So, to avoid them being evaluated (which is probably what's intended), we have to quote them with `expr()`.
+
+4. `rlang::call_standardise()` doesn’t work so well for the following calls. Why? What makes `mean()` special?
+
+```{r}
+call_standardise(quote(mean(1:10, na.rm = TRUE)))
+
+call_standardise(quote(mean(n = T, 1:10)))
+
+call_standardise(quote(mean(x = 1:10, , TRUE)))
+```
+
+```{r}
+mean(1:10, na.rm = TRUE)
+mean(n = T, 1:10)
+mean(x = 1:10, , TRUE)
+```
+
+It's hard to deal with `mean()` because it takes `...` so it can't be complete standardized.
+
+5. Why does this code not make sense?
+
+```{r}
+x <- expr(foo(x = 1))
+x
+attributes(x)
+names(x) <- c("x", "y")
+```
+
+... because expressions don't have a `$names` attribute.
+
+6. Construct the expression `if(x > 1) "a" else "b"` using multiple calls to `call2()`. How does the code structure reflect the structure of the AST?
+
+```{r}
+call2(expr(`if`), 
+      call2(expr(`>`), 
+            expr(x), 
+            1),
+      "a",
+      "b")
+```
+
+```{r}
+lobstr::ast(if(x > 1) "a" else "b")
+```
+
+Both the `call2()` construction and the AST formulate `if ... else` statements as expressions.
+
+
+## 18.4 Parsing and grammar
+
+### 18.4.1 Operator precedence
+
+```{r}
+lobstr::ast(1 + 2 * 3)
+```
+
+Predicting precedence of arithmetic operators is easy, but predicting non-arithmetic R operators can be difficult. Check out `!` and `%in%`... `%in%` takes precedence over `!`.
+
+```{r}
+lobstr::ast(!x %in% y)
+```
+
+Details of all R operators' precedence is detailed in `?Syntax`.
+
+Here's the table.
+
+| Order | Operator(s) | Description | 
+|----|------------|-------------------------------------------|
+| 1  | `::` `:::` |  access variables in a namespace          |
+| 2  | `$` `@`    |  component / slot extraction              |
+| 3  | `[` `[[`   |  indexing                                 |
+| 4  | `^`        |  exponentiation (right to left)           |
+| 5  | `-` `+`    |  unary minus and plus                     |
+| 6  | `:`        |  sequence operator                        |
+| 7  | `%any%`    |  special operators (including %% and %/%) |
+| 8  | `*` `/`    |  multiply, divide                         |
+| 9  | `+` `-`    |  (binary) add, subtract                   |
+| 10 | `<` `>` `<=` `>=` `==` `!=` |  ordering and comparison |
+| 11 | `!`        |  negation                                 |
+| 12 | `&` `&&`   |  and                                      |
+| 13 | `|` `||`   |  or                                       |
+| 14 | `~`        |  as in formulae                           |
+| 15 | `->` `->>` |  rightwards assignment                    |
+| 16 | `<-` `<<-` |  assignment (right to left)               |
+| 17 | `=`        |  assignment (right to left)               |
+| 18 | `?`        |  help (unary and binary)                  |
+
+### 18.4.2 Associativity
+
+In R, most operators are left-associative, i.e. the operations on the left are evaluated first
+
+```{r}
+lobstr::ast(1 + 2 + 3)
+```
+
+There are two exceptions: exponentiation and assignment. They're right-associative.
+
+```{r}
+lobstr::ast(2^3^4)
+
+lobstr::ast(x <- y <- z)
+```
+
+### 18.4.3 Parsing and deparsing
+
+**Parsing**
+
+Occasionally you have code stored in a string, and you want to parse it yourself. You can do so with `rlang::parse_expr()`.
+
+`rlang::parse_expr()` and `rlang::parse_exprs()` are _**STRING TO EXPRESSION**_.
+
+```{r}
+x1 <- "y <- x + 10"
+x1
+
+rlang::is_call(x1)
+
+x2 <- rlang::parse_expr(x1)
+x2
+
+rlang::is_call(x2)
+```
+
+If you have multiple expressions separated by `;` or `\n`, use `rlang::parse_exprs()`.
+
+```{r}
+x3 <- "a <- 1; a + 1"
+x3
+
+rlang::parse_exprs(x3)
+```
+
+**NOTE**: If you find yourself working with strings containing code very frequently, you should reconsider your process. Read Chapter 19 and consider if you can instead more safely generate expressions using quasiquotation.
+
+**Deparsing**
+
+The opposite of parsing is deparsing. You can do this with `rlang::expr_text()`.
+
+`rlang::expr_text()` is _**EXPRESSION TO STRING**_.
+
+```{r}
+z <- rlang::expr(y <- x + 10)
+z
+rlang::is_call(z)
+
+rlang::expr_text(z)
+```
+
+Parsing and deparsing are not perfectly symmetric because parsing generates an abstract syntax tree. This means we lose backticks around ordinary names, comments, and whitespace.
+
+```{r}
+cat(rlang::expr_text(rlang::expr({
+  # This is a comment
+  x <-             `x` + 1
+})))
+```
+
+### 18.4.4 Exercises
+
+1. R uses parentheses in two slightly different ways as illustrated by these two calls:
+
+```
+f((1))
+`(`(1 + 1)
+```
+
+Compare and contrast the two uses by referencing the AST.
+
+```{r}
+lobstr::ast(f((1)))
+
+lobstr::ast(`(`(1 + 1))
+```
+
+The first one has a constant as an argument. The second has a call object as an argument. So what?
+
+2. `=` can also be used in two ways. Construct a simple example that shows both uses.
+
+```{r}
+lobstr::ast(`=`(y, 3))
+
+lobstr::ast(f(x = 1))
+```
+
+In the first example, `=` works as an assignment operator. It evaluates the expression on the RHS and assigns it to the variable named on the LHS.
+
+In the second example, `=` evaluates what's on the RHS and passes it as a parameter to the argument in the function `f`.
+
+3. Does `-2^2` yield `4` or `-4`? Why?
+
+According to `?Syntax`, exponentiation (`^`) takes precedence over unary operators `+` and `-` to make values positive or negative. So, `-2^2` should evalute to `-4`. Let's check.
+
+```{r}
+-2^2
+
+lobstr::ast(-2^2)
+```
+
+4. What does `!1 + !1` return? Why?
+
+The `+` binary operator for addition takes precedence over the unary negation operator `!`. 
+
+`!` coerces numerics to logicals.
+
+```{r}
+!0
+!1
+!0.5
+!9.7
+```
+
+`+` (and `-`) coerce logicals to integers.
+
+```{r}
+class(TRUE + TRUE)
+TRUE + TRUE
+TRUE + FALSE
+FALSE + FALSE
+```
+
+So, `!1 + !1` stepped out would be:
+
+0. `!1 + (!1)` -- `!` coerces `1` to `TRUE`
+1. `!(1 + FALSE)` -- `+` coerces `FALSE` to `0`
+2. `!1` -- `!` coerces `1` to `TRUE`
+3. `FALSE`
+
+Let's check.
+
+```{r}
+!1 + !1
+
+lobstr::ast(!1 + !1)
+```
+
+5. Why does `x1 <- x2 <- x3 <- 0` work? Describe the two reasons.
+
+The `<-` operator is right-associative and evaluates the RHS before assigning it to the LHS. So first, `0` is evaluated and assigned to `x3`. Second, `x3` is evaluated to `0` and assigned to `x2`. Third and last, `x2` is evaluted to `0` and assigned to `x1`.
+
+```{r}
+x1 <- x2 <- x3 <- 0
+x1
+x2
+x3
+```
+
+6. Compare the ASTs of `x + y %+% z` and `x ^ y %+% z`. What have you learned about the precedence of custom infix functions?
+
+Here are the relevant operators.
+
+| Order | Operator(s) | Description | 
+|----|------------|-------------------------------------------|
+| ... | ...       |  ...                                      |
+| 4  | `^`        |  exponentiation (right to left)           |
+| ... | ...       |  ...                                      |
+| 7  | `%any%`    |  special operators (including %% and %/%) |
+| ... | ...       |  ...                                      |
+| 9  | `+` `-`    |  (binary) add, subtract                   |
+| ... | ...       |  ...                                      |
+
+```{r}
+lobstr::ast(x + y %+% z)
+
+lobstr::ast(x ^ y %+% z)
+```
+
+In `x + y %+% z`, the `%+%` takes precedence over `+`, so `y %+% z` is evaluated first. If this were `x + y + z`, `x + y` would be evaluted first.
+
+In `x ^ y %+% z`, the `^` takes precedence over `%+%`, so `x ^ y` is evaluated first.
+
+7. What happens if you call `parse_expr()` with a string that generates multiple expressions? e.g. `parse_expr("x + 1; y + 1")`
+
+I'm guessing only the first expression get evaluated. Let's see...
+
+```{r}
+rlang::parse_expr("x + 1; y + 1")
+```
+
+Nope! It throws a useful error. Cool.
+
+8. What happens if you attempt to parse an invalid expression? e.g. `"a +"` or `"f())"`.
+
+I'm guessing an error is thrown. Let's see...
+
+```{r}
+rlang::parse_expr("a +")
+
+rlang::parse_expr("f())")
+```
+
+Yep. `rlang` throws useful errors.
+
+9. `deparse()` produces vectors when the input is long. For example, the following call produces a vector of length two.
+
+```{r}
+expr <- rlang::expr(g(a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r + s + t + u + v + w + x + y + z))
+
+deparse(expr)
+```
+
+What does `expr_text()` do instead?
+
+```{r}
+rlang::expr_text(expr)
+```
+
+`expr_text()` returns a length-1 character vector but inserts a `\n` linebreak and 4 spaces after 62(?) characters. Why 62?
+
+10. `pairwise.t.test()` assumes that `deparse()` always returns a length one character vector. Can you construct an input that violates this expectation? What happens?
+
+Not sure how to go about this. I might hafta actually give more of a shit about pairwise t-tests... but I don't. SKIP!
 
 
 ```{r echo=FALSE}
