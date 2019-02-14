@@ -1342,6 +1342,183 @@ x1</code></pre></div>
 <p>Not sure how to go about this. I might hafta actually give more of a shit about pairwise t-tests… but I don’t. SKIP!</p>
 </div>
 </div>
+<div id="walking-the-ast-with-recursive-functions" class="section level2">
+<h2>18.5 Walking the AST with recursive functions</h2>
+<p>Helper functions for learning in this section.</p>
+<p>This first function returns the type of an expression passed to it.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">expr_type &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="cf">if</span> (rlang<span class="op">::</span><span class="kw">is_syntactic_literal</span>(x)) {
+    <span class="st">&quot;constant&quot;</span>
+  } <span class="cf">else</span> <span class="cf">if</span> (<span class="kw">is.symbol</span>(x)) {
+    <span class="st">&quot;symbol&quot;</span>
+  } <span class="cf">else</span> <span class="cf">if</span> (<span class="kw">is.call</span>(x)) {
+    <span class="st">&quot;call&quot;</span>
+  } <span class="cf">else</span> <span class="cf">if</span> (<span class="kw">is.pairlist</span>(x)) {
+    <span class="st">&quot;pairlist&quot;</span>
+  } <span class="cf">else</span> {
+    <span class="kw">typeof</span>(x)
+  }
+}</code></pre></div>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">expr_type</span>(rlang<span class="op">::</span><span class="kw">expr</span>(<span class="st">&quot;a&quot;</span>))</code></pre></div>
+<pre><code>## [1] &quot;constant&quot;</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">expr_type</span>(rlang<span class="op">::</span><span class="kw">expr</span>(x))</code></pre></div>
+<pre><code>## [1] &quot;symbol&quot;</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">expr_type</span>(rlang<span class="op">::</span><span class="kw">expr</span>(<span class="kw">f</span>(<span class="dv">1</span>, <span class="dv">2</span>)))</code></pre></div>
+<pre><code>## [1] &quot;call&quot;</code></pre>
+<p>This second function is a <code>switch</code> wrapper for the first function.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">switch_expr &lt;-<span class="st"> </span><span class="cf">function</span>(x, ...) {
+  <span class="cf">switch</span>(<span class="kw">expr_type</span>(x),
+         ...,
+         <span class="kw">stop</span>(<span class="st">&quot;Don't know how to handle type &quot;</span>, <span class="kw">typeof</span>(x), <span class="dt">call. =</span> <span class="ot">FALSE</span>)
+  )
+}</code></pre></div>
+<p>With these two functions in hand, we can write a basic template for any function that walks the AST using <code>switch()</code>.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">recurse_call &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">switch_expr</span>(x,
+              <span class="co"># Base cases</span>
+              <span class="dt">symbol =</span> ,
+              <span class="dt">constant =</span> ,
+              
+              <span class="co"># Recursive cases</span>
+              <span class="dt">call =</span> ,
+              <span class="dt">pairlist =</span>
+  )
+}</code></pre></div>
+<p>We’ll solve the base case first since that’s easy.</p>
+<div id="finding-f-and-t" class="section level3">
+<h3>18.5.1 Finding F and T</h3>
+<p>The first function we’ll make that walks/traverse an AST will detect if a function contains the logical abbreviations <code>T</code> or <code>F</code> (obv. for <code>TRUE</code> and <code>FALSE</code>). (These abbreviations are considered bad practice when <em>programming</em> in R… but it’s like whatevs when using R interactively.</p>
+<p>The goal is that the function returns <code>TRUE</code> if an AST contains a logical abbreviation (<code>T</code>/<code>F</code>) and <code>FALSE</code> otherwise.</p>
+<p>What are the types of <code>T</code> and <code>TRUE</code>?</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">expr_type</span>(<span class="kw">expr</span>(T))</code></pre></div>
+<pre><code>## [1] &quot;symbol&quot;</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">expr_type</span>(<span class="kw">expr</span>(<span class="ot">TRUE</span>))</code></pre></div>
+<pre><code>## [1] &quot;constant&quot;</code></pre>
+<p>OK, so <code>T</code> is a symbol/name and <code>TRUE</code> is a constant (length-1 logical vector).</p>
+<p>This tells how to write our base case conditions for recursive function that detects use of <code>T</code> or <code>F</code> in call objects. A constant should always return <code>FALSE</code> and a symbol should return <code>TRUE</code> if that symbol is either <code>T</code> or <code>F</code>.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">logical_abbr_rec &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">switch_expr</span>(x,
+              <span class="co"># Base cases</span>
+              <span class="dt">constant =</span> <span class="ot">FALSE</span>,
+              <span class="dt">symbol =</span> <span class="kw">as_string</span>(x) <span class="op">%in%</span><span class="st"> </span><span class="kw">c</span>(<span class="st">&quot;F&quot;</span>, <span class="st">&quot;T&quot;</span>),
+              
+              <span class="co"># Recursive cases</span>
+              <span class="dt">call =</span> ,
+              <span class="dt">pairlist =</span>
+  )
+}</code></pre></div>
+<p>So far, this function <code>logical_abbr_rec()</code> function assumes that its argument <code>x</code> is being passed as an expression. It’s good practice to write a wrapper function that makes the function easier to use. Users can just pass the parameter (with having to type <code>expr(...)</code> every time) and the wrapper function takes care of quoting it.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">logical_abbr &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">logical_abbr_rec</span>(<span class="kw">enexpr</span>(x))
+}</code></pre></div>
+<p>Let’s test what we’ve got so far.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="ot">TRUE</span>)</code></pre></div>
+<pre><code>## [1] FALSE</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="dv">3</span>)</code></pre></div>
+<pre><code>## [1] FALSE</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(T)</code></pre></div>
+<pre><code>## [1] TRUE</code></pre>
+<p>Now we need to deal with the recursive cases.</p>
+<p>Here we want to do the same thing for calls and for pairlists: recursively apply the function to each subcomponent, and return <code>TRUE</code> if any subcomponent contains a logical abbreviation.</p>
+<p>This is made easy by <code>purrr::some()</code>, which iterates over a list and returns TRUE if the predicate function is true for any element. (<code>base::any()</code> works with logical vectors, not lists.)</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">logical_abbr_rec &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">switch_expr</span>(x,
+              <span class="co"># Base cases</span>
+              <span class="dt">constant =</span> <span class="ot">FALSE</span>,
+              <span class="dt">symbol =</span> <span class="kw">as_string</span>(x) <span class="op">%in%</span><span class="st"> </span><span class="kw">c</span>(<span class="st">&quot;F&quot;</span>, <span class="st">&quot;T&quot;</span>),
+              
+              <span class="co"># Recursive cases</span>
+              <span class="dt">call =</span> , <span class="co"># when RHS is empty, it falls through to next RHS</span>
+              <span class="dt">pairlist =</span> purrr<span class="op">::</span><span class="kw">some</span>(x, logical_abbr_rec)
+  )
+}</code></pre></div>
+<p>Let’s test this.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="dv">3</span>)</code></pre></div>
+<pre><code>## [1] FALSE</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="kw">mean</span>(x, <span class="dt">na.rm =</span> <span class="ot">TRUE</span>))</code></pre></div>
+<pre><code>## [1] FALSE</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="kw">mean</span>(x, <span class="dt">na.rm =</span> T))</code></pre></div>
+<pre><code>## [1] TRUE</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">logical_abbr</span>(<span class="cf">function</span>(x, <span class="dt">na.rm =</span> T) <span class="ot">FALSE</span>)</code></pre></div>
+<pre><code>## [1] TRUE</code></pre>
+</div>
+<div id="finding-all-variables-created-by-assignment" class="section level3">
+<h3>18.5.2 Finding all variables created by assignment</h3>
+<p>The next task is to list all variables created by assignment.</p>
+<p>Let’s review the assignment AST.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">lobstr<span class="op">::</span><span class="kw">ast</span>(x &lt;-<span class="st"> </span><span class="dv">10</span>)</code></pre></div>
+<pre><code>## █─`&lt;-` 
+## ├─x 
+## └─10</code></pre>
+<p>Here the base cases are straightforward because we know that neither a symbol nor a constant represents assignment.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">find_assign_rec &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">switch_expr</span>(x,
+              <span class="co">#base cases</span>
+              <span class="dt">constant =</span> ,
+              <span class="dt">symbol =</span> <span class="kw">character</span>()
+  )
+}
+find_assign &lt;-<span class="st"> </span><span class="cf">function</span>(x) <span class="kw">find_assign_rec</span>(<span class="kw">enexpr</span>(x)) <span class="co"># wrapper function</span>
+
+<span class="kw">find_assign</span>(x)</code></pre></div>
+<pre><code>## character(0)</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">find_assign</span>(<span class="st">&quot;x&quot;</span>)</code></pre></div>
+<pre><code>## character(0)</code></pre>
+<p>Next we implement the recursive cases.</p>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">flat_map_chr &lt;-<span class="st"> </span><span class="cf">function</span>(.x, .f, ...) {
+  purrr<span class="op">::</span><span class="kw">flatten_chr</span>(purrr<span class="op">::</span><span class="kw">map</span>(.x, .f, ...))
+}
+
+find_assign_rec &lt;-<span class="st"> </span><span class="cf">function</span>(x) {
+  <span class="kw">switch_expr</span>(x,
+              <span class="co"># base cases</span>
+              <span class="dt">constant =</span> ,
+              <span class="dt">symbol =</span> <span class="kw">character</span>(),
+              
+              <span class="co"># recursive cases</span>
+              <span class="dt">pairlist =</span> <span class="kw">flat_map_chr</span>(<span class="kw">as.list</span>(x), find_assign_rec),
+              <span class="dt">call =</span> {
+                <span class="cf">if</span> (<span class="kw">is_call</span>(x, <span class="st">&quot;&lt;-&quot;</span>)) {
+                  <span class="kw">as_string</span>(x[[<span class="dv">2</span>]])
+                } <span class="cf">else</span> {
+                  <span class="kw">flat_map_chr</span>(<span class="kw">as.list</span>(x), find_assign_rec)
+                }
+              }
+  )
+}
+find_assign &lt;-<span class="st"> </span><span class="cf">function</span>(x) <span class="kw">find_assign_rec</span>(<span class="kw">enexpr</span>(x)) <span class="co"># wrapper function</span>
+
+<span class="kw">find_assign</span>(x)</code></pre></div>
+<pre><code>## character(0)</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">find_assign</span>(<span class="st">&quot;x&quot;</span>)</code></pre></div>
+<pre><code>## character(0)</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">find_assign</span>(x &lt;-<span class="st"> </span><span class="dv">10</span>)</code></pre></div>
+<pre><code>## [1] &quot;x&quot;</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">find_assign</span>(y &lt;-<span class="st"> </span><span class="kw">f</span>(<span class="dt">a =</span> <span class="dv">1</span>, <span class="dt">b =</span> <span class="dv">2</span>))</code></pre></div>
+<pre><code>## [1] &quot;y&quot;</code></pre>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">find_assign</span>({
+  a &lt;-<span class="st"> </span><span class="dv">1</span>
+  { 
+    b &lt;-<span class="st"> </span><span class="dv">2</span> 
+  }
+})</code></pre></div>
+<pre><code>## [1] &quot;a&quot; &quot;b&quot;</code></pre>
+<p>There’s more here to this section that gets fairly complicated. I don’t think it’ll be helpful for the problems I’ll be solving anytime soon, so I’m going to skip this section.</p>
+</div>
+</div>
+<div id="specialised-data-structures" class="section level2">
+<h2>18.6 Specialised data structures</h2>
+<p>I’m also going to skip this section because I don’t think it’ll be useful right now. Maybe it will be in the future, in which case I’ll come back to it.</p>
+<div id="pairlists" class="section level3">
+<h3>18.6.1 Pairlists</h3>
+</div>
+<div id="missing-arguments" class="section level3">
+<h3>18.6.2 Missing arguments</h3>
+</div>
+<div id="expression-vectors" class="section level3">
+<h3>18.6.3 Expression vectors</h3>
+</div>
+</div>
 </div>
 
 
