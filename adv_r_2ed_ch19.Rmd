@@ -1,0 +1,372 @@
+---
+title: "Advanced R (2nd ed)"
+output: 
+  html_document:
+    theme: sandstone
+    highlight: zenburn
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = TRUE)
+```
+
+# IV Metaprogramming - Chapter 19 - Quasiquotation
+
+## 19.1 Introduction
+
+```{r}
+library(rlang)
+library(purrr)
+```
+
+## 19.2 Motivation
+
+Imagine you’re creating a lot of strings by joining together words.
+
+```{r}
+paste("Good", "morning", "Hadley")
+paste("Good", "morning", "Alice")
+```
+
+You are sick and tired of writing all those quotes, and instead you just want to use bare words.
+
+```{r}
+cement <- function(...) {
+  args <- ensyms(...)
+  paste(purrr::map(args, as_string), collapse = " ")
+}
+
+# args_blah <- syms(exprs(Good, morning))
+# args_blah
+# purrr::map(args_blah, as_string)
+# list("one", "two")
+# paste(list("one", "two"), collapse = " ")
+
+cement(Good, morning, Hadley)
+cement(Good, morning, Alice)
+```
+
+This function is nice because we no longer need to type quotation marks. The problem comes when we want to use variables.
+
+```{r}
+name <- "Hadley"
+time <- "morning"
+
+paste("Good", time, name)
+```
+
+Obvs, this doesn't work the way we want with `cement()`.
+
+```{r}
+cement(Good, time, name)
+```
+
+We need some way to explicitly unquote the input to tell `cement()` to remove the automatic quote marks. Here we need time and name to be treated differently to Good. Quasiquotation gives us a standard tool to do so: `!!`, called "unquote", and pronounced bang-bang. `!!` tells a quoting function to drop the implicit quotes.
+
+```{r}
+cement(Good, !!time, !!name)
+```
+
+It’s useful to compare `cement()` and `paste()` directly. `paste()` evaluates its arguments, so we must quote where needed; `cement()` quotes its arguments, so we must unquote where needed.
+
+```{r}
+paste("Good", time, name)
+cement(Good, !!time, !!name)
+```
+
+### 19.2.1 Vocabulary
+
+The distinction between quoted and evaluated arguments is important:
+
+* An **evaluated argument** obeys R’s usual evaluation rules.
+* A **quoted argument** is captured by the function, and is processed in some custom way.
+
+`paste()` evaluates all its arguments; `cement()` quotes all its arguments.
+
+If you’re ever unsure about whether an argument is quoted or evaluated, try executing the code outside of the function. If it doesn’t work or does something different, then that argument is quoted. For example, you can use this technique to determine that the first argument to `library()` is quoted:
+
+```{r}
+library(MASS) # MASS here is quoted... it works as an arg in a fxn
+
+MASS # see... it doesn't work outside the function call as an arg
+
+detach("package:MASS", unload = TRUE)
+```
+
+### 19.2.2 Exercises
+
+1. For each function in the following base R code, identify which arguments are quoted and which are evaluated.
+
+```{r}
+library(MASS) # `MASS` quoted
+
+mtcars2 <- subset(mtcars, cyl == 4) # `mtcars` eval'd, `cyl == 4` quoted 
+
+with(mtcars2, sum(vs)) # `mtcars2` eval'd, `sum(vs)` quoted
+sum(mtcars2$am) # `mtcars2$am` evaluated
+
+rm(mtcars2) # mtcars eval'd
+```
+
+2. For each function in the following tidyverse code, identify which arguments are quoted and which are evaluated.
+
+```{r}
+library(dplyr) # `dplyr` quoted
+library(ggplot2) # `ggplot2` quoted
+
+by_cyl <- mtcars %>% # `mtcars` eval'd
+  group_by(cyl) %>%  # `cyl` quoted
+  summarise(mean = mean(mpg)) # `mean` quoted, `mean(mpg)` quoted, `mgp` quoted
+
+ggplot(by_cyl, aes(cyl, mean)) + geom_point() # `by_cyl` eval'd
+                                              # `aes(cyl, mean)` eval'd
+                                              #   `cyl`, `mean` quoted
+```
+
+
+## 19.3 Quoting
+
+The first part of quasiquotation is quotation. Quotation is capturing an expression without evaluting it.
+
+### 19.3.1 Capturing expressions
+
+Four important quoting functions: `expr()`, `exprs()`, `enexpr()`, `enexprs()`
+
+`expr()`: for capturing a single expression supplied by programmer during interactive exploration
+
+```{r}
+expr(x + y)
+
+expr(1 / 2 / 3)
+```
+
+`exprs()`: for capturing multiple expressions (separated by commas) supplied by programmer during interactive exploration
+
+```{r}
+exprs(x + y, 1 / 2 / 3)
+```
+
+`enexpr()`: for capturing a single expression passed by a user to a function
+
+```{r}
+f1 <- function(x) expr(x)
+
+f1(a + b + c) # doesn't work how we'd like
+```
+
+```{r}
+f2 <- function(x) enexpr(x)
+
+f2(a + b + c) # b/c we used `enexpr()` this now works how we'd like
+```
+
+`enexprs()`: for capturing muliple expressions (separated by commas) passed by a user to a function
+
+```{r}
+f3 <- function(...) enexprs(...)
+
+f3(x = 1, y = 10 * z)
+```
+
+### 19.3.2 Capturing symbols
+
+In the event you want to capture a variable name instead of an arbitrary expression, there are four important functions: `sym()`, `syms()`, `ensym()`, `ensyms()`
+
+`sym()`: for capturing a single variable name (symbol) from a character supplied by the programmer during interactive exploration
+
+```{r}
+sym("a")
+```
+
+`syms()`: for capturing multiple variable names (symbols) from a character vector or list supplied by the programmer during interactive exploration
+
+```{r}
+syms(c("a", "b"))
+syms(list("c", "d"))
+```
+
+`ensym()`: for capturing a single variable name (symbol) from a character or symbol passed by a user to a function
+
+```{r}
+f4 <- function(x) ensym(x)
+
+f4("x")
+f4(x)
+```
+
+`ensyms()`: for capturing multiple variable names (symbols) passed by a user to a function
+
+```{r}
+f5 <- function(...) ensyms(...)
+
+f5("x")
+f5(x)
+f5("a", "b")
+f5(c, d, e)
+```
+
+### 19.3.3 With base R
+
+Not interested in using base R at this time. `** shrug **`
+
+### 19.3.4 Substition
+
+Not interested in using base R at this time. `** shrug **`
+
+### 19.3.5 Summary
+
+When quoting (i.e. capturing code), there are two important distinctions:
+
+1. Is it supplied by the developer of the code or the user of the code? I.e. is it fixed (supplied in the body of the function) or varying (supplied via an argument)?
+2. Do you want to capture a single expression or multiple expressions?
+
+|   | Developer | User |
+|---|---|---|
+| One | `expr()` | `enexpr()` |
+| Many | `exprs()` | `enexprs()` |
+
+### 19.3.6 Exercises
+
+1. How is `expr()` implemented Look at its source code.
+
+`expr()` is just a wrapper function that passes it's argument (`expr`) to `enxpr()`.
+
+Here's the code:
+
+```{r}
+function (expr) 
+{
+    enexpr(expr)
+}
+```
+
+2. Compare and contrast the following two functions. Can you predict the output before running them?
+
+```{r}
+f1 <- function(x, y) {
+  exprs(x = x, y = y)
+}
+
+f2 <- function(x, y) {
+  enexprs(x = x, y = y)
+}
+
+# f1(a + b, c + d)
+# f2(a + b, c + d)
+```
+
+Because `f1()` uses `exprs()`, it will output 
+
+```
+$x
+x
+
+$y
+y
+```
+
+no matter what's passed to it.
+
+`f2()` in this case will output 
+
+```
+$x 
+a + b
+
+$y
+c + d
+```
+
+Let's test them!
+
+```{r}
+f1(a + b, c + d)
+f2(a + b, c + d)
+```
+
+3. What happens if you try to use `enexpr()` with an expression (i.e. `enexpr(x + y)`? What happens if `enexpr()` is passed a missing argument?
+
+```{r}
+enexpr(x + y)
+```
+
+An error is thrown saying that the argument to `enexpr()` must be a argument symbol.
+
+```{r}
+f1 <- function(x) enexpr(x)
+
+f2 <- function(x, y) enexprs(x, y)
+
+f1()
+f2(x = 1, )
+
+is.null(f())
+f1() == ""
+
+is.null(f2(x = 1, )[[2]])
+f2(x = 1, )[[2]] == ""
+```
+
+It returns an empty string apparently.
+
+4. How are `exprs(a)` and `exprs(a = )` different? Think about both the input and the output.
+
+```{r}
+exprs(a)
+```
+ 
+ In `exprs(a)` above, `a` is an expression that is captured.
+ 
+```{r}
+exprs(a = )
+```
+
+In `exprs(a = )` above, `a` isn't an expression but a location reference in a argument list (a pairlist).
+
+5. What are other differences between `exprs()` and `alist()`? Read the documentation for the named arguments of `exprs()` to find out.
+
+_Dunno._
+
+6. The documentation for substitute() says:
+
+> Substitution takes place by examining each component of the parse tree as follows:
+> 
+> * If it is not a bound symbol in env, it is unchanged.
+> * If it is a promise object (i.e., a formal argument to a function) the expression slot of the promise replaces the symbol.
+> * If it is an ordinary variable, its value is substituted;
+> * Unless env is .GlobalEnv in which case the symbol is left unchanged.
+
+Create examples that illustrate each of the four different cases.
+
+_Meh._
+
+
+```{r echo=FALSE}
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+```
