@@ -342,6 +342,192 @@ Create examples that illustrate each of the four different cases.
 
 _Meh._
 
+## 19.4 Unquoting
+
+Unquoting is one inverse of quoting. It allows you to selectively evaluate code inside `expr()`, so that `expr(!!x)` is equivalent to `x`.
+
+### 19.4.1 Unquoting one argument
+
+Use `!!` to unquote a single argument in a function call. `!!` takes a single expression, evaluates it, and inserts the result into the AST.
+
+```{r}
+x <- expr(a + b + c)
+
+expr(f(!!x, y))
+```
+
+![Effects of `!!`](./imgs/bang-bang.png){width=250}
+
+`!!` also works with symbols and constants.
+
+```{r}
+a <- sym("y")
+b <- 1
+
+expr(f(!!a, !!b))
+```
+
+![Effects of `!!` on symbol or constant](./imgs/simple.png){width=250}
+
+If the RHS of `!!` is a function call, `!!` will evaluate it and insert the result.
+
+```{r}
+lobstr::ast(mean(x = c(1L, 2L, 3L), na.rm = TRUE))
+
+mean_rm <- function(var) {
+  var <- ensym(var)
+  expr(mean(!!var, na.rm = TRUE))
+}
+
+expr(!!mean_rm(x) + !!mean_rm(y)) 
+# lobstr::ast(!!mean_rm(x))
+```
+
+`!!` preserves operator precedence because it works with expressions.
+
+```{r}
+x1 <- expr(x + 1)
+x2 <- expr(x + 2)
+
+expr(!!x1 / !!x2)
+```
+
+![Effect of `!!` on operator precedence](./imgs/infix.png)
+
+### 19.4.2 Unquoting a function
+
+`!!` is most commonly used to replace the arguments to a function, but you can also use it to replace the function itself. The only challenge here is operator precedence: `expr(!!f(x, y))` unquotes the result of `f(x, y)`, so you need an extra pair of parentheses: `expr((!!f)(x, y))`
+
+```{r}
+f <- expr(foo)
+
+expr((!!f)(x, y))
+```
+
+This also works when `f` itself is a call.
+
+```{r}
+f <- expr(pkg::foo)
+
+expr((!!f)(x, y))
+```
+
+![`!!` unquoting on a function call](./imgs/fun.png){width=250}
+
+Sometimes it'll be clearer if you use `call2()`.
+
+```{r}
+f <- expr(pkg::foo)
+
+call2(f, expr(x), expr(y))
+```
+
+### 19.4.3 Unquoting a missing argument
+
+[Come back to this if needed.]
+
+### 19.4.4 Unquoting in special forms
+
+[Come back to this if needed.]
+
+### 19.4.5 Unquoting many arguments
+
+`!!` is a one-to-one replacement. `!!!` (called “unquote-splice”, and pronounced bang-bang-bang) is a one-to-many replacement. It takes a list of expressions and inserts them at the location of the `!!!`.
+
+```{r}
+xs <- exprs(1, a, -b)
+
+expr(f(!!!xs, y))
+```
+
+You can set the names of the arguments.
+
+```{r}
+named_xs <- set_names(xs, c("a", "b", "c"))
+
+expr(f(!!!named_xs, d = 4))
+```
+
+![Effect of `!!!`](./imgs/bang-bang-bang.png){width=250}
+
+`!!!` can be used in any rlang function that takes `...`, regardless of whether `...` is quoted or not. This can be useful in `call2()`.
+
+```{r}
+call2("f", !!!xs, expr(y))
+```
+
+### 19.4.6 The polite fiction of `!!`
+
+[Come back to this if needed.]
+
+### 19.4.7 Non-standard ASTs
+
+[Come back to this if needed.]
+
+### 19.4.8 Exercises
+
+1. Given the following components...
+
+```{r}
+xy <- expr(x + y)
+xz <- expr(x + z)
+yz <- expr(y + z)
+abc <- exprs(a, b, c)
+```
+
+... use quasiquotation to construct the following calls...
+
+```{r, eval=FALSE}
+(x + y) / (y + z)
+-(x + z) ^ (y + z)
+(x + y) + (y + z) - (x + y)
+atan2(x + y, y + z)
+sum(x + y, x + y, y + z)
+sum(a, b, c)
+mean(c(a, b, c), na.rm = TRUE)
+foo(a = x + y, b = y + z)
+```
+
+```{r}
+expr(!!xz / !!yz)
+# expr(`^`(-!!xz, !!yz))
+expr(-(!!xz)^!!yz)
+expr(!!xy + !!yz - !!xy)
+expr(atan2(!!xy, !!yz))
+expr(sum(!!xy, !!xy, !!yz))
+expr(sum(!!!abc))
+expr(mean(c(!!!abc), na.rm = TRUE))
+expr(foo(a = !!xy, b = !!yz))
+```
+
+2. The following two calls print the same, but are actually different
+
+```{r}
+(a <- expr(mean(1:10)))
+
+(b <- expr(mean(!!(1:10))))
+
+identical(a, b)
+```
+
+What's the difference? Which one is more natural?
+
+```{r}
+1:10
+!!(1:10)
+
+expr_print(1:10)
+expr_print(!!(1:10))
+
+lobstr::ast(mean(1:10))
+lobstr::ast(mean(!!(1:10)))
+```
+
+It has something to do with section 19.4.7 Non-standard ASTs... but I don't care right now.
+
+## 19.5 Non-quoting
+
+
 
 ```{r echo=FALSE}
 ###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
