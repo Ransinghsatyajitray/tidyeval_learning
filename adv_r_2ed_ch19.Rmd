@@ -121,8 +121,8 @@ by_cyl <- mtcars %>% # `mtcars` eval'd
   summarise(mean = mean(mpg)) # `mean` quoted, `mean(mpg)` quoted, `mgp` quoted
 
 ggplot(by_cyl, aes(cyl, mean)) + geom_point() # `by_cyl` eval'd
-                                              # `aes(cyl, mean)` eval'd
-                                              #   `cyl`, `mean` quoted
+# `aes(cyl, mean)` eval'd
+#   `cyl`, `mean` quoted
 ```
 
 
@@ -238,7 +238,7 @@ Here's the code:
 ```{r}
 function (expr) 
 {
-    enexpr(expr)
+  enexpr(expr)
 }
 ```
 
@@ -316,9 +316,9 @@ It returns an empty string apparently.
 ```{r}
 exprs(a)
 ```
- 
- In `exprs(a)` above, `a` is an expression that is captured.
- 
+
+In `exprs(a)` above, `a` is an expression that is captured.
+
 ```{r}
 exprs(a = )
 ```
@@ -526,6 +526,205 @@ lobstr::ast(mean(!!(1:10)))
 It has something to do with section 19.4.7 Non-standard ASTs... but I don't care right now.
 
 ## 19.5 Non-quoting
+
+[This section basically describes the functions in base R that effectively turn quoting off. It's an informative section if you're using/programming with those functions, but I don't think this'll have much bearing on what I'm doing.]
+
+## 19.6 Dot-dot-dot (`...`)
+
+What do you do if the elements you want to put in `...` are already stored in a list? For example, imagine you have a list of data frames that you want to `rbind()` together
+
+```{r}
+dfs <- list(
+  a = data.frame(x = 1, y = 2),
+  b = data.frame(x = 3, z = 4)
+)
+```
+
+What do you do if you want to supply the argument name indirectly? For example, imagine you want to create a single column data frame where the name of the column is specified in a variable.
+
+```{r}
+var <- "x"
+val <- c(4, 3, 9)
+```
+
+One way to think about these problems is to draw explicit parallels to quasiquotation:
+
+* Row-binding multiple data frames is like unquote-splicing. We want to inline individual elements of the list into the call:
+
+```{r}
+dplyr::bind_rows(!!!dfs)
+```
+
+* The second problem is like unquoting the left-hand side of `=`. Rather than interpreting var literally, we want to use the value stored in the variable called `var`:
+
+```{r}
+tibble::tibble(!!var := val)
+```
+
+### 19.6.1 Examples
+
+One place we could use `list2()` is to create a wrapper around `attributes()` that allows us to set attributes flexibly.
+
+```{r}
+set_attr <- function(.x, ...) {
+  attr <- rlang::list2(...)
+  attributes(.x) <- attr
+  .x
+}
+
+attrs <- list(x = 1, y = 2)
+attr_name <- "z"
+
+int_vctr <- 1:10
+
+set_attr(int_vctr, "w" = 0, !!!attrs, !!attr_name := 3)
+```
+
+### 19.6.2 `exec()`
+
+If you don't want to use the tidy dots (`...`), you can use `rlang::exec()` to call a function with some arguments supplied directly by (in `...`) and other indirectly (in a list).
+
+```{r}
+# directly
+exec("mean", x = 1:10, na.rm = TRUE, trim = 0.1)
+
+# indirectly
+args <- list(x = 1:10, na.rm = TRUE, trim = 0.1)
+exec("mean", !!!args)
+
+# mixed
+params <- list(na.rm = TRUE, trim = 0.1)
+exec("mean", x = 1:10, !!!params)
+```
+
+`rlang::exec()` also makes it possible to supply argument names indirectly.
+
+```{r}
+arg_name <- "na.rm"
+arg_val <- TRUE
+
+exec("mean", x = 1:10, !!arg_name := arg_val, trim = 0.1)
+```
+
+Lastly, it's useful if you have a vector or list of function names that you want to call with the same arguments.
+
+```{r}
+x <- c(runif(10), NA)
+funs <- c("mean", "median", "sd")
+
+purrr::map_dbl(.x = funs, .f = exec, x, na.rm = TRUE)
+```
+
+`exec()` is closely related to `call2()`; where `call2()` returns an expression, `exec()` evaluates it.
+
+### 19.6.3 `dots_list()`
+
+`list2()` ignores empty arguments at the end.
+
+```{r}
+list2(
+  x = 5:1, 
+  y = 1:5, 
+  z = 3:-1,
+)
+
+list2(
+  y = 1:5,
+  z = 3:-1,
+  x = 5:1,
+)
+
+# `list2()` is apparently in tibbles
+tibble::tibble(
+  y = 1:5,
+  z = 3:-1,
+  x = 5:1,
+)
+```
+
+`list2()` is a wrapper around `rlang::dots_list()`. You can get more control by using `dots_list()` directly. 
+
+* `.ignore_empty` allows you to control exactly which arguments are ignored
+* `.homonyms` controls what happens if multiple arguments use the same name
+
+```{r}
+str(dots_list(x = 1, x = 2))
+
+str(dots_list(x = 1, x = 2, .homonyms = "first"))
+
+str(dots_list(x = 1, x = 2, .homonyms = "last"))
+
+str(dots_list(x = 1, x = 2, .homonyms = "error"))
+```
+
+* If there are empty arguments that are not ignored, `.preserve_empty` controls what to do with them. The default throws an error; setting `.preserve_empty = TRUE` instead returns missing symbols. This is useful if you’re using `dots_list()` to generate function calls.
+
+### 19.6.4 With base R
+
+Base R provides a Swiss army knife to solve these problems: `do.call()`. `do.call()` has two main arguments. The first argument, what, gives a function to call. The second argument, `args`, is a list of arguments to pass to that function, and so `do.call("f", list(x, y, z))` is equivalent to `f(x, y, z)`.
+
+One approach to avoiding `do.call()` is found in the `RCurl::getURL()` function written by Duncan Temple Lang. `getURL()` takes both `...` and `.opts` which are concatenated together. This looks something like this.
+
+```{r}
+f <- function(..., .dots) {
+  dots <- c(list(...), .dots)
+  
+  # Do something
+  # ...
+}
+```
+
+Apparently Hadley now prefers a different approach (coming up in next section?).
+
+### 19.6.5 Exercises
+
+1. One way to implement `exec()` is shown below. Describe how it works. What are the key ideas?
+
+```{r}
+exec <- function(f, ..., .env = caller_env()) {
+  args <- list2(...)
+  do.call(f, args, envir = .env)
+}
+```
+
+`f` is a length-1 character vector of the function call, like `"mean"`.
+
+`...` are the arguments passed to the function.
+
+With `.env` you can pass a specific environment for the function being built, but the default environment is the caller environment (the executin environment of the function that called the current function).
+
+2. Carefully read the source code for `interaction()`, `expand.grid()`, and `par()`. Compare and contrast the techniques they use for switching between dots and list behaviour.
+
+```{r}
+interaction
+```
+
+```{r}
+expand.grid
+```
+
+```{r}
+par
+```
+
+Hmm... that's a lot right now. Maybe I'll come back to this.
+
+3. Explain the problem with this definition of `set_attr()`.
+
+```{r}
+set_attr <- function(x, ...) {
+  attr <- rlang::list2(...)
+  attributes(x) <- attr
+  x
+}
+
+set_attr(1:10, x = 10)
+```
+
+There's a name collision between the `x` that is the first argument of the function `set_attr` and the `x` that the user is hoping to set as an attribute name.
+
+## 19.7 Case Studies
+
 
 
 
